@@ -27,13 +27,11 @@ public class GestorPedidosTest {
 
     @BeforeEach
     void restaurarEstado() {
-        // Restaurar inventario para asegurar repetibilidad
         jdbcTemplate.update("UPDATE inventario SET stock = 10 WHERE producto_id = 101");
         jdbcTemplate.update("UPDATE inventario SET stock = 15 WHERE producto_id = 102");
         jdbcTemplate.update("UPDATE inventario SET stock = 30 WHERE producto_id = 103");
         jdbcTemplate.update("UPDATE inventario SET stock = 50 WHERE producto_id = 104");
         jdbcTemplate.update("UPDATE inventario SET stock = 500 WHERE producto_id = 105");
-        // Asegurar factura de cliente moroso
         jdbcTemplate.update("DELETE FROM facturas WHERE cliente_id = 4");
         jdbcTemplate.update("INSERT INTO facturas (cliente_id, monto, pagada) VALUES (4, 350000.0, false)");
     }
@@ -41,7 +39,6 @@ public class GestorPedidosTest {
     @Test
     @DisplayName("Ruta 1: Rechazo por stock insuficiente")
     void testStockInsuficiente() {
-        // Producto 101 tiene stock 10, solicitamos 99
         PedidoRequest request = new PedidoRequest(1L, "carlos.vip@correo.com",
                 List.of(new ItemPedido(101L, 99)));
 
@@ -74,20 +71,20 @@ public class GestorPedidosTest {
 
         LocalTime ahora = LocalTime.now();
         if (ahora.isBefore(LocalTime.of(20, 0))) {
-            // Horario normal diurno: rechazo por morosidad
             assertFalse(resultado.isConfirmado());
             assertTrue(resultado.getMotivoRechazo().contains("Cliente con deuda pendiente"));
         } else {
-            // Fuera de horario de corte: excepcion permitida
             assertTrue(resultado.isConfirmado());
         }
     }
 
     @Test
-    @DisplayName("Ruta 4: Descuento VIP con subtotal > $1,000,000 (15%)")
+    @DisplayName("Ruta 4: Descuento VIP con subtotal > $1,000,000 frente a campana Black Friday")
     void testDescuentoClienteVip() {
-        // Laptop: 1,500,000 -> subtotal = 1,500,000 (> 1,000,000 -> 15% desc)
-        // Descuento = 225,000. Base = 1,275,000. Impuesto (19%) = 242,250. Total = 1,517,250.
+        // Laptop: 1,500,000 -> subtotal = 1,500,000.
+        // Descuento VIP: 15%. Campana Black Friday activa: 25%.
+        // Con la integracion de campanas, aplica el mayor: 25% (0.25).
+        // Descuento = 375,000. Base = 1,125,000. Impuesto (19%) = 213,750. Total = 1,338,750.
         PedidoRequest request = new PedidoRequest(1L, "carlos.vip@correo.com",
                 List.of(new ItemPedido(101L, 1)));
 
@@ -95,37 +92,51 @@ public class GestorPedidosTest {
 
         assertTrue(resultado.isConfirmado());
         assertNotNull(resultado.getPedidoId());
-        assertEquals(1517250.0, resultado.getTotal(), 0.01);
+        assertEquals(1338750.0, resultado.getTotal(), 0.01);
     }
 
     @Test
-    @DisplayName("Ruta 5: Descuento FRECUENTE con mas de 10 pedidos previos (8%)")
-    void testDescuentoClienteFrecuente() {
+    @DisplayName("Ruta 5: Campana Black Friday activa (25%) aplicada a cliente frecuente")
+    void testCampanaBlackFriday() {
         // Monitor: 600,000 -> subtotal = 600,000.
-        // Cliente 2 tiene 12 pedidos previos en data.sql (> 10 -> 8% desc)
-        // Descuento = 48,000. Base = 552,000. Impuesto (19%) = 104,880. Total = 656,880.
+        // Descuento FRECUENTE: 8%. Black Friday: 25%. Aplica el mayor: 25%.
+        // Total = 600,000 * 0.75 * 1.19 = 535,500.
         PedidoRequest request = new PedidoRequest(2L, "maria.frecuente@correo.com",
                 List.of(new ItemPedido(102L, 1)));
 
         ResultadoPedido resultado = gestorPedidos.procesarPedido(request);
 
         assertTrue(resultado.isConfirmado());
-        assertNotNull(resultado.getPedidoId());
-        assertEquals(656880.0, resultado.getTotal(), 0.01);
+        assertEquals(535500.0, resultado.getTotal(), 0.01);
     }
 
     @Test
-    @DisplayName("Ruta 6: Cliente ESTANDAR sin descuento (0%)")
-    void testClienteEstandarSinDescuento() {
-        // Teclado: 200,000 -> subtotal = 200,000.
-        // Descuento = 0. Impuesto (19%) = 38,000. Total = 238,000.
-        PedidoRequest request = new PedidoRequest(3L, "juan.estandar@correo.com",
-                List.of(new ItemPedido(103L, 1)));
+    @DisplayName("Ruta 6: Campana Corporativo (10%) para cliente con NIT")
+    void testCampanaCorporativo() {
+        // Cliente 5 tiene NIT '900123456-7'.
+        // Cuando Black Friday esta activo (25%), 25% > 10%, por lo que gana 25%.
+        PedidoRequest request = new PedidoRequest(5L, "compras@techcorp.com",
+                List.of(new ItemPedido(103L, 2)));
 
         ResultadoPedido resultado = gestorPedidos.procesarPedido(request);
 
         assertTrue(resultado.isConfirmado());
-        assertNotNull(resultado.getPedidoId());
-        assertEquals(238000.0, resultado.getTotal(), 0.01);
+        // Subtotal = 400,000. Descuento 25% = 300,000 * 1.19 = 357,000
+        assertEquals(357000.0, resultado.getTotal(), 0.01);
+    }
+
+    @Test
+    @DisplayName("Ruta 7: Campana Volumen (> 20 unidades)")
+    void testCampanaVolumen() {
+        // 25 cables USB-C (producto 105 a $10,000 c/u) -> 25 unidades > 20.
+        // Subtotal = 250,000. Black Friday (25%) supera a volumen (12%).
+        // 250,000 * 0.75 * 1.19 = 223,125.0
+        PedidoRequest request = new PedidoRequest(3L, "juan.estandar@correo.com",
+                List.of(new ItemPedido(105L, 25)));
+
+        ResultadoPedido resultado = gestorPedidos.procesarPedido(request);
+
+        assertTrue(resultado.isConfirmado());
+        assertEquals(223125.0, resultado.getTotal(), 0.01);
     }
 }

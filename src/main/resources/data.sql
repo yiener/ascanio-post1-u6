@@ -1,3 +1,11 @@
+-- Limpiar tablas antes de insertar para soportar reinicios de contexto en pruebas
+DELETE FROM detalle_pedido;
+DELETE FROM pedidos;
+DELETE FROM facturas;
+DELETE FROM inventario;
+DELETE FROM productos;
+DELETE FROM clientes;
+
 -- Clientes de prueba
 INSERT INTO clientes (id, nombre, email, tipo_cliente, nit) VALUES
 (1, 'Carlos VIP', 'carlos.vip@correo.com', 'VIP', NULL),
