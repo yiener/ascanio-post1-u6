@@ -65,3 +65,46 @@ Se identifican las siguientes evidencias textuales y estructurales:
    - **`PedidoRepository`:** Se extrae toda la interacción JDBC cruda (`INSERT`, `UPDATE`, manejo de identidades) a un componente `@Repository` enfocado exclusivamente en la persistencia.
    - **`NotificacionPedidoService`:** Se extrae la construcción del mensaje y la delegación al servicio de correo en un componente `@Service` enfocado en la presentación y mensajería.
    - **`GestorPedidos`:** Queda convertido en un **orquestador delgado** que no supera 35 líneas, coordinando limpiamente las cuatro etapas del ciclo de vida del pedido.
+
+---
+
+### Parte 2 — Diagnóstico del Crecimiento del Sistema: Antipatrón Golden Hammer
+
+#### A. Evidencia Concreta del Código Fuente
+Tras la refactorización de la Parte 1, se requirió incorporar tres campañas promocionales: `BLACK_FRIDAY` (25%), `CORPORATIVO` (10% si tiene NIT) y `VOLUMEN` (12% si compra más de 20 unidades). Quien implementó esta extensión cayó en el antipatrón **Golden Hammer** (*Martillo de Oro*): dado que *Chain of Responsibility* funcionó eficazmente en las validaciones, se reusó la misma cadena para resolver los descuentos promocionales, creando tres clases derivadas de `ValidadorPedido`: `PromocionBlackFriday`, `PromocionCorporativo` y `PromocionVolumen`.
+
+Se identifica la siguiente evidencia concreta en el código:
+
+1. **Inexistencia de Dependencia de Orden y Ausencia de Corte Anticipado:**
+   - En `ValidadorStock` y `ValidadorCliente` existía una dependencia de orden real e imprescindible (si no hay stock, no tiene sentido consultar deudas ni clientes) y una necesidad de **corte anticipado** (`contexto.rechazar(...)`).
+   - Por el contrario, en `PromocionBlackFriday`, `PromocionCorporativo` y `PromocionVolumen`, **ninguna clase rechaza el pedido jamás**. Su método `ejecutar()` nunca invoca `contexto.rechazar()`. 
+   - Ejecutar `PromocionVolumen` antes de `PromocionCorporativo` o viceversa produce idéntico resultado financiero. No hay orden de precedencia intrínseco.
+
+2. **Violación Semántica del Contrato de `ValidadorPedido`:**
+   - La clase abstracta `ValidadorPedido` tiene la responsabilidad explícita de "validar y decidir si el pedido continúa o se rechaza".
+   - Al heredar de ella para calcular promociones, se distorsiona la semántica del contrato polimórfico (violando el principio de sustitución de Liskov y coherencia de dominio): una promoción comercial **no valida nada**, solo aprovecha el mecanismo de enganche de la cadena para mutar un estado.
+
+3. **Polución de Estado Mutable Compartido en `ContextoPedido`:**
+   - Para permitir que los falsos validadores operaran, se debió añadir el campo mutable `private double descuentoCampana = 0;` y el método `aplicarDescuentoCampana(double valor)` a `ContextoPedido`.
+   - Este acoplamiento sobre un estado mutable genera fragilidad: si en el futuro se requiriese que dos promociones fuesen acumulativas (por ejemplo, sumar 10% corporativo + 12% volumen) en lugar de competitivas (`Math.max`), la cadena no ofrece ninguna semántica clara de composición ni agregación.
+
+4. **Justificación del Antipatrón (Golden Hammer):**
+   - La solución se implementó como cadena de validación **no porque fuera la abstracción natural o adecuada del problema**, sino porque era una herramienta recientemente aprendida y disponible que ya estaba conectada en `GestorPedidos`. Este es el núcleo de Golden Hammer: *"Si la única herramienta que tienes es un martillo, tiendes a ver todos los problemas como si fueran un clavo"*.
+
+---
+
+#### B. Patrón de Diseño para Corregir Golden Hammer: Extensión de Strategy
+
+1. **Unificación bajo la abstracción `EstrategiaDescuento`:**
+   - Las tres campañas de descuento tienen idéntica estructura y naturaleza matemática que los descuentos por tipo de cliente: reciben el `ContextoPedido`, evalúan una condición y devuelven una tasa de descuento numérica entre 0.0 y 1.0.
+   - Se crean `DescuentoBlackFriday`, `DescuentoCorporativo` y `DescuentoVolumen` como implementaciones directas de la interfaz `EstrategiaDescuento`.
+
+2. **Compositor y Resolutor `CalculadorDescuentoFinal`:**
+   - Se introduce el componente `@Component public class CalculadorDescuentoFinal` que orquesta la estrategia del tipo de cliente (`SelectorEstrategiaDescuento`) y la lista de campañas promocionales activas.
+   - Aplica funcionalmente `campanas.stream().mapToDouble(...).max()` y determina el descuento efectivo final sin estados mutables intermedios en el contexto.
+
+3. **Restauración de la Pureza de la Cadena y Erradicación de Código Muerto (Prevención de Lava Flow):**
+   - `ValidadorPedido` vuelve a contener única y exclusivamente los eslabones legítimos: `ValidadorStock` y `ValidadorCliente`.
+   - Se **eliminan por completo** `PromocionBlackFriday.java`, `PromocionCorporativo.java`, `PromocionVolumen.java` y el campo `descuentoCampana` de `ContextoPedido`. 
+   - No se deja código comentado ni huérfano, evitando incurrir en el antipatrón **Lava Flow** (*Flujo de Lava*). El historial de Git es el repositorio legítimo del registro evolutivo.
+
