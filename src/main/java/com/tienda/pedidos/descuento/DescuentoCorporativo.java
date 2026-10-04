@@ -1,21 +1,21 @@
-package com.tienda.pedidos.validacion;
+package com.tienda.pedidos.descuento;
 
+import com.tienda.pedidos.validacion.ContextoPedido;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
-// Nuevo eslabon: cliente corporativo
 @Component
-public class PromocionCorporativo extends ValidadorPedido {
+public class DescuentoCorporativo implements EstrategiaDescuento {
 
     private final JdbcTemplate jdbcTemplate;
 
-    public PromocionCorporativo(JdbcTemplate jdbcTemplate) {
+    public DescuentoCorporativo(JdbcTemplate jdbcTemplate) {
         this.jdbcTemplate = jdbcTemplate;
     }
 
     @Override
-    protected void ejecutar(ContextoPedido contexto) {
+    public double calcular(ContextoPedido contexto) {
         String nit = null;
         try {
             nit = jdbcTemplate.queryForObject(
@@ -24,9 +24,6 @@ public class PromocionCorporativo extends ValidadorPedido {
         } catch (EmptyResultDataAccessException e) {
             nit = null;
         }
-
-        if (nit != null && !nit.isBlank()) {
-            contexto.aplicarDescuentoCampana(0.10);
-        }
+        return (nit != null && !nit.isBlank()) ? 0.10 : 0.0;
     }
 }

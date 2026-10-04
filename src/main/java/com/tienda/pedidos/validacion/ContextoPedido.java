@@ -2,15 +2,12 @@ package com.tienda.pedidos.validacion;
 
 import com.tienda.pedidos.dto.PedidoRequest;
 
-// Se agrega un campo mutable mas al contexto para que los nuevos eslabones puedan escribir el descuento
 public class ContextoPedido {
     private final PedidoRequest request;
     private String tipoCliente;
     private double subtotal;
     private boolean rechazado = false;
     private String motivoRechazo;
-
-    private double descuentoCampana = 0;
 
     public ContextoPedido(PedidoRequest request) {
         this.request = request;
@@ -47,15 +44,5 @@ public class ContextoPedido {
     public void rechazar(String motivo) {
         this.rechazado = true;
         this.motivoRechazo = motivo;
-    }
-
-    public double getDescuentoCampana() {
-        return descuentoCampana;
-    }
-
-    public void aplicarDescuentoCampana(double valor) {
-        if (valor > this.descuentoCampana) {
-            this.descuentoCampana = valor; // el mayor descuento gana
-        }
     }
 }
